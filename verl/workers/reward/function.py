@@ -21,6 +21,7 @@ from typing import Callable, Optional, Tuple, TypedDict
 
 import torch
 from transformers import PreTrainedTokenizer
+import numpy as np
 
 from ...protocol import DataProto
 from .config import RewardConfig
@@ -46,7 +47,7 @@ BatchRewardFunction = Callable[[list[RewardInput]], list[RewardScore]]
 class SequentialFunctionRewardManagerMixin:
     reward_fn: SequentialRewardFunction
 
-    def compute_reward_sequential(self, data: DataProto) -> Tuple[torch.Tensor, dict[str, list[float]]]:
+    def compute_reward_sequential(self, data: DataProto) -> Tuple[torch.Tensor, dict[str, list[float]], Optional[DataProto]]:
         reward_tensor = torch.zeros_like(data.batch["responses"], dtype=torch.float32)
         reward_metrics = defaultdict(list)
         response_ids = data.batch["responses"]
@@ -68,13 +69,14 @@ class SequentialFunctionRewardManagerMixin:
             for key, value in score.items():
                 reward_metrics[key].append(value)
 
-        return reward_tensor, reward_metrics
+        # 对于sequential模式，也返回data以保持接口一致（虽然没有额外信息）
+        return reward_tensor, reward_metrics, None
 
 
 class BatchFunctionRewardManagerMixin:
     reward_fn: BatchRewardFunction
 
-    def compute_reward_batch(self, data: DataProto) -> Tuple[torch.Tensor, dict[str, list[float]]]:
+    def compute_reward_batch(self, data: DataProto) -> Tuple[torch.Tensor, dict[str, list[float]], Optional[DataProto]]:
         reward_inputs = []
         response_ids = data.batch["responses"]
         response_length = torch.sum(data.batch["response_mask"], dim=-1)
@@ -92,8 +94,14 @@ class BatchFunctionRewardManagerMixin:
             }
             
             # 添加原始问题文本
+            # if "problem" in data.non_tensor_batch:
+            #     reward_input["problem"] = data.non_tensor_batch["problem"][i]
+            # 添加原始问题文本（移除多模态标记用于API调用）
             if "problem" in data.non_tensor_batch:
-                reward_input["problem"] = data.non_tensor_batch["problem"][i]
+                problem_text = str(data.non_tensor_batch["problem"][i])
+                # 清理 <image> 和 <video> 标记，只保留纯文本
+                problem_text = problem_text.replace("<image>", "").replace("<video>", "").strip()
+                reward_input["problem"] = problem_text
             
             # 添加图像数据
             if "multi_modal_data" in data.non_tensor_batch and data.non_tensor_batch["multi_modal_data"][i] is not None:
@@ -101,7 +109,17 @@ class BatchFunctionRewardManagerMixin:
             
             reward_inputs.append(reward_input)
 
-        scores = self.reward_fn(reward_inputs)
+        # 调用reward函数，可能返回分数和额外信息
+        result = self.reward_fn(reward_inputs)
+        
+        # 检查返回值类型
+        if isinstance(result, tuple) and len(result) == 2:
+            scores, api_response_list = result
+            # 将API响应信息添加到non_tensor_batch中，使用 numpy.array 而不是 torch.tensor
+            data.non_tensor_batch["api_response_info"] = np.array(api_response_list, dtype=object)
+        else:
+            scores = result
+        
         reward_tensor = torch.zeros_like(data.batch["responses"], dtype=torch.float32)
         reward_metrics = defaultdict(list)
         for i, score in enumerate(scores):
@@ -110,7 +128,8 @@ class BatchFunctionRewardManagerMixin:
             for key, value in score.items():
                 reward_metrics[key].append(value)
 
-        return reward_tensor, reward_metrics
+        # 返回修改后的data，以便传递api_response_info等非张量数据
+        return reward_tensor, reward_metrics, data
 
 
 class AutoRewardManager(BatchFunctionRewardManagerMixin, SequentialFunctionRewardManagerMixin):
@@ -144,7 +163,7 @@ class AutoRewardManager(BatchFunctionRewardManagerMixin, SequentialFunctionRewar
         self.config = config
         self.tokenizer = tokenizer
 
-    def compute_reward(self, data: DataProto) -> Tuple[torch.Tensor, dict[str, list[float]]]:
+    def compute_reward(self, data: DataProto) -> Tuple[torch.Tensor, dict[str, list[float]], Optional[DataProto]]:
         """Compute reward for a batch of data."""
         if self.reward_type == "batch":
             return self.compute_reward_batch(data)

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -x
-export CUDA_VISIBLE_DEVICES=4,5,6,7
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 MODEL_PATH=/home/chenyukun/workspace/data2/chenyukun/models/HF-Models/Qwen/Qwen2.5-VL-7B-Instruct  # replace it with your local file path
 export RAY_TMPDIR=/data2/chenyukun/workspace/ray_tmp

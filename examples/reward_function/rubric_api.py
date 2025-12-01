@@ -36,17 +36,17 @@ REWARD_TYPE = "batch"
 
 # Rubric权重配置
 DEFAULT_RUBRIC_WEIGHTS = {
-    "correctness_numeric": 0.4,
-    "visual_interpretation": 0.2,
-    "math_validity": 0.2,
-    "instruction_following": 0.1,
-    "expression_format": 0.1,
+    "correctness_numeric": 0.7,
+    "visual_interpretation": 0.1,
+    "math_validity": 0.1,
+    "instruction_following": 0.05,
+    "expression_format": 0.05,
 }
 
 # API配置
-API_ENDPOINT = "https://idealab.alibaba-inc.com/api/openai/v1/chat/completions"
-API_KEY = "your-api-key"  # 替换为你的实际AK
-MODEL_NAME = "gpt-4o-0513"  # 可以配置的模型名称
+API_ENDPOINT = "https://api.a1r.cc/v1/chat/completions"
+API_KEY = "sk-cDNrDh4dQfjiVnyby9B4K3NefSLvFhRlbbVMg3pqhKS1707p"  # 替换为你的实际AK
+MODEL_NAME = "gpt-4.1-mini"  # 可以配置的模型名称
 
 # 默认分数（用于失败情况）
 DEFAULT_SCORES = {
@@ -87,6 +87,7 @@ async def call_evaluation_api_async(
     session: aiohttp.ClientSession,
     image_data_uri: str,
     problem_text: str,
+    ground_truth: str,  # 新增参数
     model_output: str,
     api_endpoint: str,
     api_key: str,
@@ -96,7 +97,7 @@ async def call_evaluation_api_async(
     max_retries: int = 3,
     retry_delay: float = 1.0,
     idx: int = 0,
-) -> Dict[str, float]:
+) -> tuple[Dict[str, float], Dict[str, Any]]:  # 修改返回类型
     """
     异步调用OpenAI格式的API进行评估，带重试机制
     
@@ -104,6 +105,7 @@ async def call_evaluation_api_async(
         session: aiohttp客户端会话
         image_data_uri: 图像的data URI
         problem_text: 问题文本
+        ground_truth: 真实答案  # 新增说明
         model_output: 模型输出
         api_endpoint: API端点
         api_key: API密钥
@@ -115,7 +117,7 @@ async def call_evaluation_api_async(
         idx: 样本索引（用于日志）
     
     Returns:
-        包含各个rubric分数的字典
+        包含各个rubric分数的字典 和 API完整响应信息的元组
     """
     headers = {
         "Content-Type": "application/json",
@@ -125,6 +127,7 @@ async def call_evaluation_api_async(
     # 构建user prompt
     user_text = USER_PROMPT.format(
         PROBLEM_TEXT=problem_text,
+        GROUND_TRUTH=ground_truth,  # 新增
         MODEL_OUTPUT=model_output
     )
     
@@ -175,13 +178,21 @@ async def call_evaluation_api_async(
                 if "choices" in result and len(result["choices"]) > 0:
                     content = result["choices"][0]["message"]["content"]
                     
+                    # 构建API响应信息
+                    api_response_info = {
+                        "api_raw_response": content,
+                        "api_model": model_name,
+                        "api_usage": result.get("usage", {}),
+                        "api_finish_reason": result["choices"][0].get("finish_reason", ""),
+                    }
+                    
                     # 尝试解析JSON格式的分数
                     try:
                         scores_data = json.loads(content)
                         if "scores" in scores_data:
-                            return scores_data["scores"]
+                            return scores_data["scores"], api_response_info
                         else:
-                            return scores_data
+                            return scores_data, api_response_info
                     except json.JSONDecodeError:
                         # 如果不是纯JSON，尝试提取JSON部分
                         import re
@@ -189,9 +200,9 @@ async def call_evaluation_api_async(
                         if json_match:
                             scores_data = json.loads(json_match.group())
                             if "scores" in scores_data:
-                                return scores_data["scores"]
+                                return scores_data["scores"], api_response_info
                             else:
-                                return scores_data
+                                return scores_data, api_response_info
                         else:
                             print(f"样本 {idx}: 无法解析API返回的内容: {content[:200]}...")
                             raise ValueError("API返回内容不是有效的JSON格式")
@@ -206,7 +217,12 @@ async def call_evaluation_api_async(
                 await asyncio.sleep(delay)
             else:
                 print(f"样本 {idx}: 达到最大重试次数，返回默认分数")
-                return DEFAULT_SCORES.copy()
+                error_info = {
+                    "api_raw_response": "timeout",
+                    "api_model": model_name,
+                    "api_error": "timeout",
+                }
+                return DEFAULT_SCORES.copy(), error_info
         
         except aiohttp.ClientError as e:
             print(f"样本 {idx}: 网络错误 (尝试 {attempt + 1}/{max_retries}): {e}")
@@ -215,7 +231,12 @@ async def call_evaluation_api_async(
                 await asyncio.sleep(delay)
             else:
                 print(f"样本 {idx}: 达到最大重试次数，返回默认分数")
-                return DEFAULT_SCORES.copy()
+                error_info = {
+                    "api_raw_response": "network_error",
+                    "api_model": model_name,
+                    "api_error": "network_error",
+                }
+                return DEFAULT_SCORES.copy(), error_info
         
         except (json.JSONDecodeError, ValueError, KeyError) as e:
             print(f"样本 {idx}: 解析错误 (尝试 {attempt + 1}/{max_retries}): {e}")
@@ -224,7 +245,12 @@ async def call_evaluation_api_async(
                 await asyncio.sleep(delay)
             else:
                 print(f"样本 {idx}: 达到最大重试次数，返回默认分数")
-                return DEFAULT_SCORES.copy()
+                error_info = {
+                    "api_raw_response": "parse_error",
+                    "api_model": model_name,
+                    "api_error": "parse_error",
+                }
+                return DEFAULT_SCORES.copy(), error_info
         
         except Exception as e:
             print(f"样本 {idx}: 未知错误 (尝试 {attempt + 1}/{max_retries}): {e}")
@@ -233,9 +259,14 @@ async def call_evaluation_api_async(
                 await asyncio.sleep(delay)
             else:
                 print(f"样本 {idx}: 达到最大重试次数，返回默认分数")
-                return DEFAULT_SCORES.copy()
+                error_info = {
+                    "api_raw_response": "unknown_error",
+                    "api_model": model_name,
+                    "api_error": "unknown_error",
+                }
+                return DEFAULT_SCORES.copy(), error_info
     
-    return DEFAULT_SCORES.copy()
+    return DEFAULT_SCORES.copy(), {} # This line should ideally not be reached if max_retries > 0
 
 
 async def process_batch_async(
@@ -246,7 +277,7 @@ async def process_batch_async(
     max_concurrent: int = 50,
     timeout: int = 60,
     max_retries: int = 3,
-) -> List[Dict[str, float]]:
+) -> tuple[List[Dict[str, float]], List[Dict[str, Any]]]:  # 修改返回类型
     """
     异步批量处理reward计算
     
@@ -260,16 +291,17 @@ async def process_batch_async(
         max_retries: 最大重试次数
     
     Returns:
-        分数列表
+        分数列表 和 API响应信息列表的元组
     """
     # 创建信号量来限制并发
     semaphore = asyncio.Semaphore(max_concurrent)
     
-    async def process_single(idx: int, reward_input: Dict[str, Any]) -> Dict[str, float]:
+    async def process_single(idx: int, reward_input: Dict[str, Any]) -> tuple[Dict[str, float], Dict[str, Any]]:
         """处理单个样本"""
         async with semaphore:
             response = reward_input["response"]
             problem = reward_input.get("problem", "")
+            ground_truth = reward_input.get("ground_truth", "")  # 提取真实答案
             multi_modal_data = reward_input.get("multi_modal_data", None)
             
             # 提取图像
@@ -285,13 +317,19 @@ async def process_batch_async(
             # 如果没有图像，返回默认分数
             if image_data_uri is None:
                 print(f"样本 {idx}: 警告：没有找到图像数据，使用默认分数")
-                return DEFAULT_SCORES.copy()
+                error_info = {"api_error": "no_image"}
+                return DEFAULT_SCORES.copy(), error_info
             
             # 调用API
-            return await call_evaluation_api_async(
+            print(f"样本 {idx}: 调用API")
+            print(f"样本 {idx}: 问题文本: {problem}")
+            print(f"样本 {idx}: 真实答案: {ground_truth}")
+            print(f"样本 {idx}: 模型输出: {response}")
+            rubric_scores, api_response_info = await call_evaluation_api_async(
                 session=session,
                 image_data_uri=image_data_uri,
                 problem_text=problem,
+                ground_truth=ground_truth,  # 传入真实答案
                 model_output=response,
                 api_endpoint=api_endpoint,
                 api_key=api_key,
@@ -300,7 +338,10 @@ async def process_batch_async(
                 max_retries=max_retries,
                 idx=idx,
             )
-    
+            
+            # call_evaluation_api_async 已经返回了处理好的字典，直接返回即可
+            return rubric_scores, api_response_info
+
     # 创建aiohttp会话
     connector = aiohttp.TCPConnector(limit=max_concurrent, limit_per_host=max_concurrent)
     timeout_obj = aiohttp.ClientTimeout(total=timeout * 2)  # 总超时时间
@@ -317,12 +358,16 @@ async def process_batch_async(
         start_time = time.time()
         
         # 使用gather收集所有结果
-        rubric_scores_list = await asyncio.gather(*tasks, return_exceptions=False)
+        results = await asyncio.gather(*tasks, return_exceptions=False)
         
         elapsed_time = time.time() - start_time
         print(f"批量处理完成，耗时: {elapsed_time:.2f}秒，平均每个样本: {elapsed_time/len(tasks):.2f}秒")
         
-        return rubric_scores_list
+        # 分离分数和API响应信息
+        rubric_scores_list = [r[0] for r in results]
+        api_response_list = [r[1] for r in results]
+        
+        return rubric_scores_list, api_response_list
 
 
 def compute_weighted_score(rubric_scores: Dict[str, float], weights: Dict[str, float]) -> float:
@@ -346,7 +391,7 @@ def compute_score(
     max_concurrent: int = 50,
     timeout: int = 60,
     max_retries: int = 3,
-) -> List[Dict[str, float]]:
+) -> tuple[List[Dict[str, float]], List[Dict[str, Any]]]:  # 修改返回类型
     """
     批量计算reward分数（同步接口，内部使用异步实现）
     
@@ -365,7 +410,7 @@ def compute_score(
         max_retries: 最大重试次数
     
     Returns:
-        包含各个维度分数和overall分数的字典列表
+        包含各个维度分数和overall分数的字典列表 和 API响应信息列表的元组
     """
     if rubric_weights is None:
         rubric_weights = DEFAULT_RUBRIC_WEIGHTS
@@ -378,7 +423,7 @@ def compute_score(
             # 如果已经在运行的事件循环中，创建新的事件循环
             import nest_asyncio
             nest_asyncio.apply()
-            rubric_scores_list = loop.run_until_complete(
+            rubric_scores_list, api_response_list = loop.run_until_complete(
                 process_batch_async(
                     reward_inputs=reward_inputs,
                     api_endpoint=api_endpoint,
@@ -390,7 +435,7 @@ def compute_score(
                 )
             )
         else:
-            rubric_scores_list = loop.run_until_complete(
+            rubric_scores_list, api_response_list = loop.run_until_complete(
                 process_batch_async(
                     reward_inputs=reward_inputs,
                     api_endpoint=api_endpoint,
@@ -403,7 +448,7 @@ def compute_score(
             )
     except RuntimeError:
         # 如果没有事件循环，创建新的
-        rubric_scores_list = asyncio.run(
+        rubric_scores_list, api_response_list = asyncio.run(
             process_batch_async(
                 reward_inputs=reward_inputs,
                 api_endpoint=api_endpoint,
@@ -426,4 +471,4 @@ def compute_score(
         }
         scores.append(result)
     
-    return scores
+    return scores, api_response_list  # 返回两个列表

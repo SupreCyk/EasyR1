@@ -449,7 +449,7 @@ class RayPPOTrainer:
             test_batch = test_batch.union(test_output_gen_batch)
 
             # evaluate using reward_function
-            reward_tensor, reward_metrics = ray.get(self.val_reward_fn.compute_reward.remote(test_batch))
+            reward_tensor, reward_metrics, _ = ray.get(self.val_reward_fn.compute_reward.remote(test_batch))
 
             # store generations
             input_ids = test_batch.batch["prompts"]
@@ -534,7 +534,7 @@ class RayPPOTrainer:
                 gen_baseline_output = self.actor_rollout_ref_wg.generate_sequences(gen_baseline_batch)
 
                 new_batch = new_batch.union(gen_baseline_output)
-                reward_baseline_tensor, _ = ray.get(self.reward_fn.compute_reward.remote(new_batch))
+                reward_baseline_tensor, _, _ = ray.get(self.reward_fn.compute_reward.remote(new_batch))
                 reward_baseline_tensor = reward_baseline_tensor.sum(dim=-1)
 
                 new_batch.pop(batch_keys=list(gen_baseline_output.batch.keys()))
@@ -547,8 +547,13 @@ class RayPPOTrainer:
 
             # filter group
             if self.config.algorithm.online_filtering:
-                reward_tensor, reward_metrics = ray.get(self.reward_fn.compute_reward.remote(new_batch))
+                reward_tensor, reward_metrics, reward_data = ray.get(self.reward_fn.compute_reward.remote(new_batch))
                 new_batch.batch["token_level_scores"] = reward_tensor
+                # 合并reward worker返回的额外数据（如api_response_info）
+                if reward_data is not None and hasattr(reward_data, 'non_tensor_batch'):
+                    for key in ['api_response_info']:
+                        if key in reward_data.non_tensor_batch:
+                            new_batch.non_tensor_batch[key] = reward_data.non_tensor_batch[key]
                 for k, v in reward_metrics.items():
                     all_metrics[k].extend(v)
 
@@ -657,10 +662,15 @@ class RayPPOTrainer:
                 with timer("adv", timing_raw):
                     if "token_level_scores" not in batch.batch:
                         # get token level scores asynchronously
-                        reward_tensor, reward_metrics = ray.get(reward_ref)
+                        reward_tensor, reward_metrics, reward_data = ray.get(reward_ref)
                         batch.batch["token_level_scores"] = reward_tensor
                         reward_metrics = {f"reward/{k}": v for k, v in reduce_metrics(reward_metrics).items()}
                         metrics.update(reward_metrics)
+                        # 合并reward worker返回的额外数据（如api_response_info）
+                        if reward_data is not None and hasattr(reward_data, 'non_tensor_batch'):
+                            for key in ['api_response_info']:
+                                if key in reward_data.non_tensor_batch:
+                                    batch.non_tensor_batch[key] = reward_data.non_tensor_batch[key]
 
                     # apply kl penalty if available
                     if not self.config.algorithm.use_kl_loss and self.use_reference_policy:
@@ -710,10 +720,31 @@ class RayPPOTrainer:
                             sample_gts = [None] * len(inputs)
                         
                         reward_extra_infos_dict = {}
-                        # 如果有 uid，也保存
+                        
+                        # 保存uid
                         if "uid" in batch.non_tensor_batch:
                             reward_extra_infos_dict["uid"] = batch.non_tensor_batch["uid"].tolist()
                         
+                        # 保存API响应信息
+                        if "api_response_info" in batch.non_tensor_batch:
+                            raw_list = batch.non_tensor_batch["api_response_info"].tolist()
+                            # 如果是 dict 等结构，转成字符串
+                            api_info_list = [
+                                x if isinstance(x, str) else str(x)
+                                for x in raw_list
+                            ]
+                            reward_extra_infos_dict["api_response_info"] = api_info_list
+                        
+                        # 保存问题文本（移除多模态标记）
+                        if "problem" in batch.non_tensor_batch:
+                            reward_extra_infos_dict["problem"] = [
+                                str(p).replace("<image>", "").replace("<video>", "").strip()
+                                for p in batch.non_tensor_batch["problem"].tolist()
+                            ]
+                            
+                        # 保存数据索引
+                        if "index" in batch.non_tensor_batch:
+                            reward_extra_infos_dict["index"] = batch.non_tensor_batch["index"].tolist()
                         self._dump_generations(
                             inputs=inputs,
                             outputs=outputs,
@@ -748,7 +779,7 @@ class RayPPOTrainer:
             main_tqdm.update()
 
         # perform validation after training
-        if self.val_reward_fn is not None:
+        if self.val_reward_fn is not None and self.config.trainer.val_freq > 0:
             if (
                 val_metrics is None
                 or self.config.trainer.val_freq <= 0

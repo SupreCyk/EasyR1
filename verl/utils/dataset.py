@@ -216,6 +216,9 @@ class RLHFDataset(Dataset):
 
     def __getitem__(self, index):
         example: dict = self.dataset[index]
+        # 保存原始问题文本，用于reward计算
+        original_prompt = example.get(self.prompt_key, "")
+        original_index = example.get("index", index) 
         messages = self._build_messages(example)
         example.pop(self.prompt_key, None)
 
@@ -306,4 +309,6 @@ class RLHFDataset(Dataset):
         example["position_ids"] = position_ids
         example["raw_prompt_ids"] = raw_prompt_ids
         example["ground_truth"] = example.pop(self.answer_key)
+        example["problem"] = original_prompt
+        example["index"] = original_index 
         return example

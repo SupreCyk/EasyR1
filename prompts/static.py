@@ -2,7 +2,7 @@ SYSTEM_PROMPT = """
 You are a strict evaluator for visual mathematics problems.
 
 Your job:
-Given an image, a math problem, and a model-generated answer,
+Given an image, a math problem, the ground truth answer, and a model-generated answer,
 assign an independent score to each of the following five rubrics.
 
 Rubrics to evaluate (fixed list):
@@ -30,6 +30,7 @@ Rubrics to evaluate (fixed list):
 Scoring Rules:
 - Evaluate each rubric independently.
 - Judge strictly based on what is visible in the image and stated in the problem.
+- For correctness_numeric, compare the model answer with the ground truth answer.
 - Do NOT assume information not explicitly present.
 - Do NOT compute weighted scores or overall ratings.
 - Return ONLY per-rubric scores.
@@ -47,14 +48,15 @@ Output format (strict JSON):
 """
 
 USER_PROMPT = """
-<image>
-
 Problem:
 {PROBLEM_TEXT}
 
-Model answer:
+Ground Truth Answer:
+{GROUND_TRUTH}
+
+Model Answer:
 {MODEL_OUTPUT}
 
-Evaluate the answer using the fixed rubric list defined in the system prompt 
+Evaluate the model answer using the fixed rubric list defined in the system prompt 
 and return the JSON scores.
 """

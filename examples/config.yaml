@@ -100,7 +100,7 @@ trainer:
   save_freq: 20  # -1 to disable
   save_limit: 3  # -1 to disable
   save_model_only: false
-  save_checkpoint_path: /home/chenyukun/workspace/data2/chenyukun/workspace/VVV/checkpoints
+  save_checkpoint_path: null
   load_checkpoint_path: null
   find_last_checkpoint: true
-  rollout_data_dir: /data2/chenyukun/workspace/V/rollout_data  # 新增这一行
+  rollout_data_dir: null  # 新增这一行

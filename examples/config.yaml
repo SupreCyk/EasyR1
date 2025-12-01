@@ -9,7 +9,7 @@ data:
   video_fps: 2.0
   max_prompt_length: 2048
   max_response_length: 1024
-  rollout_batch_size: 128  # equivalent to verl's data.train_batch_size
+  rollout_batch_size: 32  # equivalent to verl's data.train_batch_size
   mini_rollout_batch_size: null  # equivalent to verl's data.gen_batch_size
   val_batch_size: 1024
   format_prompt: ./examples/format_prompt/math.jinja
@@ -33,7 +33,7 @@ algorithm:
 
 worker:
   actor:
-    global_batch_size: 128  # equivalent to verl's actor.ppo_mini_batch_size
+    global_batch_size: 32  # equivalent to verl's actor.ppo_mini_batch_size
     micro_batch_size_per_device_for_update: 8  # equivalent to verl's actor.ppo_micro_batch_size_per_gpu
     micro_batch_size_per_device_for_experience: 16  # equivalent to verl's rollout.log_prob_micro_batch_size_per_gpu
     max_grad_norm: 1.0
@@ -55,15 +55,15 @@ worker:
       enable_cpu_offload: false
       enable_rank0_init: true
     offload:
-      offload_params: false  # true: more CPU memory; false: more GPU memory
-      offload_optimizer: false  # true: more CPU memory; false: more GPU memory
+      offload_params: true  # true: more CPU memory; false: more GPU memory
+      offload_optimizer: true  # true: more CPU memory; false: more GPU memory
 
   rollout:
     n: 8
     temperature: 1.0
     top_p: 1.0
     limit_images: 0
-    gpu_memory_utilization: 0.7
+    gpu_memory_utilization: 0.6
     enforce_eager: false
     enable_chunked_prefill: false
     tensor_parallel_size: 2

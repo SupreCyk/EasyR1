@@ -84,13 +84,22 @@ class BatchFunctionRewardManagerMixin:
             response_str = self.tokenizer.decode(
                 valid_response_ids, skip_special_tokens=self.config.skip_special_tokens
             )
-            reward_inputs.append(
-                {
-                    "response": response_str,
-                    "response_length": cur_response_length,
-                    "ground_truth": data.non_tensor_batch["ground_truth"][i],
-                }
-            )
+            # 构建reward input，添加更多字段
+            reward_input = {
+                "response": response_str,
+                "response_length": cur_response_length,
+                "ground_truth": data.non_tensor_batch["ground_truth"][i],
+            }
+            
+            # 添加原始问题文本
+            if "problem" in data.non_tensor_batch:
+                reward_input["problem"] = data.non_tensor_batch["problem"][i]
+            
+            # 添加图像数据
+            if "multi_modal_data" in data.non_tensor_batch and data.non_tensor_batch["multi_modal_data"][i] is not None:
+                reward_input["multi_modal_data"] = data.non_tensor_batch["multi_modal_data"][i]
+            
+            reward_inputs.append(reward_input)
 
         scores = self.reward_fn(reward_inputs)
         reward_tensor = torch.zeros_like(data.batch["responses"], dtype=torch.float32)

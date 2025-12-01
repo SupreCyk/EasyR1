@@ -25,6 +25,9 @@ python3 -m verl.trainer.main \
     worker.actor.model.model_path=${MODEL_PATH} \
     trainer.project_name=${PROJECT_NAME}\
     trainer.experiment_name=${EXPERIMENT_NAME}\
+    worker.reward.reward_function=./examples/reward_function/rubric_api.py:compute_score \
+    worker.reward.reward_function_kwargs.api_key="你的实际AK" \
+    worker.reward.reward_function_kwargs.model_name="gpt-4o-0513" \
     trainer.n_gpus_per_node=4\
     worker.rollout.gpu_memory_utilization=0.6 \
     trainer.save_checkpoint_path=/data2/chenyukun/workspace/V/checkpoints/${PROJECT_NAME}/${EXPERIMENT_NAME}\

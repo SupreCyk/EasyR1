@@ -136,6 +136,9 @@ class TrainerConfig:
     """file to save ray timeline"""
     find_last_checkpoint: bool = True
     """automatically find the last checkpoint in the save checkpoint path to resume training"""
+    rollout_data_dir: Optional[str] = None  # 👈 添加这一行
+    """directory to save rollout data"""     # 👈 添加这一行
+
 
     def post_init(self):
         if self.save_checkpoint_path is None:

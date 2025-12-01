@@ -389,6 +389,37 @@ class RayPPOTrainer:
         samples = samples[: self.config.trainer.val_generations_to_log]
         self.logger.log_generation(samples, self.global_step)
 
+    def _dump_generations(self, inputs, outputs, gts, scores, reward_extra_infos_dict, dump_path):
+        """Dump rollout/validation samples as JSONL."""
+        import json
+        import os
+        
+        os.makedirs(dump_path, exist_ok=True)
+        filename = os.path.join(dump_path, f"{self.global_step}.jsonl")
+        
+        n = len(inputs)
+        base_data = {
+            "input": inputs,
+            "output": outputs,
+            "gts": gts,
+            "score": scores,
+            "step": [self.global_step] * n,
+        }
+        
+        for k, v in reward_extra_infos_dict.items():
+            if len(v) == n:
+                base_data[k] = v
+        
+        lines = []
+        for i in range(n):
+            entry = {k: v[i] for k, v in base_data.items()}
+            lines.append(json.dumps(entry, ensure_ascii=False))
+        
+        with open(filename, "w") as f:
+            f.write("\n".join(lines) + "\n")
+        
+        print(f"Dumped generations to {filename}")
+
     def _validate(self) -> dict[str, Any]:
         reward_tensor_lst = []
         # Lists to collect samples for the table
@@ -663,6 +694,35 @@ class RayPPOTrainer:
                     actor_metrics = reduce_metrics(actor_output.non_tensor_batch)
                     metrics.update(actor_metrics)
 
+                # 新增：保存 rollout 数据
+                rollout_data_dir = getattr(self.config.trainer, 'rollout_data_dir', None)
+                if rollout_data_dir:
+                    with timer("dump_rollout_generations", timing_raw):
+                        inputs = self.tokenizer.batch_decode(batch.batch["prompts"], skip_special_tokens=True)
+                        outputs = self.tokenizer.batch_decode(batch.batch["responses"], skip_special_tokens=True)
+                        scores = batch.batch["token_level_scores"].sum(-1).cpu().tolist()
+                        
+                        # 提取 ground truth
+                        sample_gts = []
+                        if "ground_truth" in batch.non_tensor_batch:
+                            sample_gts = batch.non_tensor_batch["ground_truth"].tolist()
+                        else:
+                            sample_gts = [None] * len(inputs)
+                        
+                        reward_extra_infos_dict = {}
+                        # 如果有 uid，也保存
+                        if "uid" in batch.non_tensor_batch:
+                            reward_extra_infos_dict["uid"] = batch.non_tensor_batch["uid"].tolist()
+                        
+                        self._dump_generations(
+                            inputs=inputs,
+                            outputs=outputs,
+                            gts=sample_gts,
+                            scores=scores,
+                            reward_extra_infos_dict=reward_extra_infos_dict,
+                            dump_path=rollout_data_dir,
+                        )
+                        
                 # validate
                 if (
                     self.val_reward_fn is not None

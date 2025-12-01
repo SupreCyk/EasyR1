@@ -24,7 +24,7 @@ REWARD_TYPE = "batch"
 
 
 def format_reward(response: str) -> float:
-    pattern = re.compile(r"<think>.*</think>.*\\boxed\{.*\}.*", re.DOTALL)
+    pattern = re.compile(r"<thinking>.*</thinking>.*\\boxed\{.*\}.*", re.DOTALL)
     format_match = re.fullmatch(pattern, response)
     return 1.0 if format_match else 0.0
 

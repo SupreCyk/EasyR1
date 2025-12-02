@@ -116,7 +116,33 @@ class BatchFunctionRewardManagerMixin:
         if isinstance(result, tuple) and len(result) == 2:
             scores, api_response_list = result
             # 将API响应信息添加到non_tensor_batch中，使用 numpy.array 而不是 torch.tensor
-            data.non_tensor_batch["api_response_info"] = np.array(api_response_list, dtype=object)
+            try:
+                judge_infos = []
+                selection_infos = []
+                selected_rubrics_list = []
+                rubric_scores_list = []
+                fallback_infos = []
+                for entry in api_response_list:
+                    if isinstance(entry, dict):
+                        judge_infos.append(entry.get("api_judge_info"))
+                        selection_infos.append(entry.get("api_selection_info"))
+                        selected_rubrics_list.append(entry.get("selected_rubrics"))
+                        rubric_scores_list.append(entry.get("rubric_scores"))
+                        fallback_infos.append(entry)
+                    else:
+                        judge_infos.append(None)
+                        selection_infos.append(None)
+                        selected_rubrics_list.append(None)
+                        rubric_scores_list.append(None)
+                        fallback_infos.append(entry)
+                data.non_tensor_batch["api_judge_info"] = np.array(judge_infos, dtype=object)
+                data.non_tensor_batch["api_selection_info"] = np.array(selection_infos, dtype=object)
+                data.non_tensor_batch["selected_rubrics"] = np.array(selected_rubrics_list, dtype=object)
+                data.non_tensor_batch["rubric_scores"] = np.array(rubric_scores_list, dtype=object)
+                data.non_tensor_batch["api_response_info"] = np.array(fallback_infos, dtype=object)
+            except Exception:
+                # 兼容旧格式，直接存储
+                data.non_tensor_batch["api_response_info"] = np.array(api_response_list, dtype=object)
         else:
             scores = result
         

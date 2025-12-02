@@ -551,7 +551,14 @@ class RayPPOTrainer:
                 new_batch.batch["token_level_scores"] = reward_tensor
                 # 合并reward worker返回的额外数据（如api_response_info）
                 if reward_data is not None and hasattr(reward_data, 'non_tensor_batch'):
-                    for key in ['api_response_info']:
+                    extra_keys = [
+                        "api_selection_info",
+                        "selected_rubrics",
+                        "api_judge_info",
+                        "rubric_scores",
+                        "api_response_info",
+                    ]
+                    for key in extra_keys:
                         if key in reward_data.non_tensor_batch:
                             new_batch.non_tensor_batch[key] = reward_data.non_tensor_batch[key]
                 for k, v in reward_metrics.items():
@@ -668,7 +675,14 @@ class RayPPOTrainer:
                         metrics.update(reward_metrics)
                         # 合并reward worker返回的额外数据（如api_response_info）
                         if reward_data is not None and hasattr(reward_data, 'non_tensor_batch'):
-                            for key in ['api_response_info']:
+                            extra_keys = [
+                                "api_selection_info",
+                                "selected_rubrics",
+                                "api_judge_info",
+                                "rubric_scores",
+                                "api_response_info",
+                            ]
+                            for key in extra_keys:
                                 if key in reward_data.non_tensor_batch:
                                     batch.non_tensor_batch[key] = reward_data.non_tensor_batch[key]
 
@@ -725,15 +739,15 @@ class RayPPOTrainer:
                         if "uid" in batch.non_tensor_batch:
                             reward_extra_infos_dict["uid"] = batch.non_tensor_batch["uid"].tolist()
                         
-                        # 保存API响应信息
-                        if "api_response_info" in batch.non_tensor_batch:
-                            raw_list = batch.non_tensor_batch["api_response_info"].tolist()
-                            # 如果是 dict 等结构，转成字符串
-                            api_info_list = [
-                                x if isinstance(x, str) else str(x)
-                                for x in raw_list
-                            ]
-                            reward_extra_infos_dict["api_response_info"] = api_info_list
+                        # 保存评估/选择的API信息与rubric结果
+                        if "api_judge_info" in batch.non_tensor_batch:
+                            reward_extra_infos_dict["api_judge_info"] = batch.non_tensor_batch["api_judge_info"].tolist()
+                        if "api_selection_info" in batch.non_tensor_batch:
+                            reward_extra_infos_dict["api_selection_info"] = batch.non_tensor_batch["api_selection_info"].tolist()
+                        if "selected_rubrics" in batch.non_tensor_batch:
+                            reward_extra_infos_dict["selected_rubrics"] = batch.non_tensor_batch["selected_rubrics"].tolist()
+                        if "rubric_scores" in batch.non_tensor_batch:
+                            reward_extra_infos_dict["rubric_scores"] = batch.non_tensor_batch["rubric_scores"].tolist()
                         
                         # 保存问题文本（移除多模态标记）
                         if "problem" in batch.non_tensor_batch:
